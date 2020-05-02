@@ -21,6 +21,8 @@ use Symfony\Bundle\MakerBundle\Util\ClassNameDetails;
  */
 final class EntityClassGenerator
 {
+    const REPOSITORY = 'Repository';
+
     private $generator;
     private $doctrineHelper;
 
@@ -30,11 +32,13 @@ final class EntityClassGenerator
         $this->doctrineHelper = $doctrineHelper;
     }
 
-    public function generateEntityClass(ClassNameDetails $entityClassDetails, bool $apiResource, bool $withPasswordUpgrade = false): string
+    public function generateEntityClass(ClassNameDetails $entityClassDetails, bool $apiResource, bool $withPasswordUpgrade = false, string $package = null): string
     {
+        $prefix = isset($package) ? sprintf("%s\\%s\\", $package, self::REPOSITORY) : self::REPOSITORY;
+
         $repoClassDetails = $this->generator->createClassNameDetails(
             $entityClassDetails->getRelativeName(),
-            'Repository\\',
+            $prefix,
             'Repository'
         );
 

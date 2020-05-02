@@ -44,6 +44,14 @@ use Symfony\Component\Console\Question\Question;
  */
 final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
 {
+    const ARGUMENT_NAME = 'name';
+
+    const ARGUMENT_PACKAGE = 'package';
+
+    const ORM_TEMPLATE = __DIR__ . '/../Resources/skeleton/doctrine/orm.tpl.yaml';
+
+    const DOCTRIME_YAML = __DIR__ . '/../../../../../config/packages/doctrine.yaml';
+
     private $fileManager;
     private $doctrineHelper;
     private $generator;
@@ -71,19 +79,20 @@ final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
     {
         $command
             ->setDescription('Creates or updates a Doctrine entity class, and optionally an API Platform resource')
-            ->addArgument('name', InputArgument::OPTIONAL, sprintf('Class name of the entity to create or update (e.g. <fg=yellow>%s</>)', Str::asClassName(Str::getRandomTerm())))
+            ->addArgument(self::ARGUMENT_NAME, InputArgument::OPTIONAL, sprintf('Class name of the entity to create or update (e.g. <fg=yellow>%s</>)', Str::asClassName(Str::getRandomTerm())))
+            ->addArgument(self::ARGUMENT_PACKAGE, InputArgument::OPTIONAL, sprintf('Package name for the entity to create or update (e.g. <fg=yellow>%s</>)', Str::asClassName(Str::getRandomTerm())))
             ->addOption('api-resource', 'a', InputOption::VALUE_NONE, 'Mark this class as an API Platform resource (expose a CRUD API for it)')
             ->addOption('regenerate', null, InputOption::VALUE_NONE, 'Instead of adding new fields, simply generate the methods (e.g. getter/setter) for existing fields')
             ->addOption('overwrite', null, InputOption::VALUE_NONE, 'Overwrite any existing getter/setter methods')
             ->setHelp(file_get_contents(__DIR__.'/../Resources/help/MakeEntity.txt'))
         ;
 
-        $inputConf->setArgumentAsNonInteractive('name');
+        $inputConf->setArgumentAsNonInteractive(self::ARGUMENT_NAME);
     }
 
     public function interact(InputInterface $input, ConsoleStyle $io, Command $command)
     {
-        if ($input->getArgument('name')) {
+        if ($input->getArgument(self::ARGUMENT_NAME)) {
             return;
         }
 
@@ -94,21 +103,24 @@ final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
             ], null, 'fg=yellow');
             $classOrNamespace = $io->ask('Enter a class or namespace to regenerate', $this->getEntityNamespace(), [Validator::class, 'notBlank']);
 
-            $input->setArgument('name', $classOrNamespace);
+            $input->setArgument(self::ARGUMENT_NAME, $classOrNamespace);
 
             return;
         }
 
-        $argument = $command->getDefinition()->getArgument('name');
+        $argument = $command->getDefinition()->getArgument(self::ARGUMENT_NAME);
         $question = $this->createEntityClassQuestion($argument->getDescription());
         $value = $io->askQuestion($question);
 
-        $input->setArgument('name', $value);
+        $input->setArgument(self::ARGUMENT_NAME, $value);
 
         if (
             !$input->getOption('api-resource') &&
             class_exists(ApiResource::class) &&
-            !class_exists($this->generator->createClassNameDetails($value, 'Entity\\')->getFullName())
+            !class_exists($this->generator->createClassNameDetails(
+                $value,
+                sprintf("%s\\%s\\", $input->getArgument(self::ARGUMENT_PACKAGE), 'Entity')
+            )->getFullName())
         ) {
             $description = $command->getDefinition()->getOption('api-resource')->getDescription();
             $question = new ConfirmationQuestion($description, false);
@@ -124,23 +136,26 @@ final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
 
         // the regenerate option has entirely custom behavior
         if ($input->getOption('regenerate')) {
-            $this->regenerateEntities($input->getArgument('name'), $overwrite, $generator);
+            $this->regenerateEntities($input->getArgument(self::ARGUMENT_NAME), $overwrite, $generator);
             $this->writeSuccessMessage($io);
 
             return;
         }
 
         $entityClassDetails = $generator->createClassNameDetails(
-            $input->getArgument('name'),
-            'Entity\\'
+            $input->getArgument(self::ARGUMENT_NAME),
+            sprintf("%s\\%s\\", $input->getArgument(self::ARGUMENT_PACKAGE), 'Entity')
         );
 
         $classExists = class_exists($entityClassDetails->getFullName());
         if (!$classExists) {
+            $this->addOrmMapping($input->getArgument(self::ARGUMENT_PACKAGE));
             $entityClassGenerator = new EntityClassGenerator($generator, $this->doctrineHelper);
             $entityPath = $entityClassGenerator->generateEntityClass(
                 $entityClassDetails,
-                $input->getOption('api-resource')
+                $input->getOption('api-resource'),
+                false,
+                $input->getArgument(self::ARGUMENT_PACKAGE)
             );
 
             $generator->writeChanges();
@@ -804,5 +819,14 @@ final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
     private function getEntityNamespace(): string
     {
         return $this->doctrineHelper->getEntityNamespace();
+    }
+
+    private function addOrmMapping(string $package)
+    {
+        $template = file_get_contents(self::ORM_TEMPLATE);
+
+        $template = str_replace('{PACKAGE}', $package, $template);
+
+        file_put_contents(self::DOCTRIME_YAML, $template, FILE_APPEND);
     }
 }
